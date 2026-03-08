@@ -13,6 +13,35 @@ const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev, port });
 const handle = app.getRequestHandler();
 
+// === Basic認証（VPS公開時） ===
+const WEB_USER = process.env.WEB_USER || '';
+const WEB_PASS = process.env.WEB_PASSWORD || '';
+const authEnabled = !!(WEB_USER && WEB_PASS);
+
+function checkBasicAuth(req, res) {
+  if (!authEnabled) return true;
+
+  // API内部呼び出しはスキップ（SSEなど）
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Basic ')) {
+    res.writeHead(401, {
+      'WWW-Authenticate': 'Basic realm="WordPress Auto Rewriter"',
+      'Content-Type': 'text/plain',
+    });
+    res.end('認証が必要です');
+    return false;
+  }
+
+  const credentials = Buffer.from(authHeader.slice(6), 'base64').toString();
+  const [user, pass] = credentials.split(':');
+
+  if (user === WEB_USER && pass === WEB_PASS) return true;
+
+  res.writeHead(403, { 'Content-Type': 'text/plain' });
+  res.end('認証に失敗しました');
+  return false;
+}
+
 // === サイト別スケジューラー ===
 const lastRunKeys = new Map(); // siteId → lastRunKey
 
@@ -110,11 +139,13 @@ function describeCron(cronExpr) {
 // === サーバー起動 ===
 app.prepare().then(() => {
   createServer((req, res) => {
+    if (!checkBasicAuth(req, res)) return;
     handle(req, res);
   }).listen(port, '0.0.0.0', async () => {
     console.log('');
     console.log('▲ WordPress Auto Rewriter');
     console.log(`  http://localhost:${port}`);
+    console.log(`  認証: ${authEnabled ? '🔒 有効' : '🔓 無効（.env で WEB_USER/WEB_PASSWORD を設定）'}`);
     console.log('');
 
     // 登録サイトのスケジュール情報を表示
