@@ -75,26 +75,10 @@ export async function generateFAQ(article, siteId, onProgress) {
 export function faqToSwellBlock(faqs) {
   if (!faqs || faqs.length === 0) return '';
 
-  const faqItems = faqs.map((faq) => {
-    const q = faq.question || faq.q || '';
-    const a = faq.answer || faq.a || '';
-
-    return `<!-- wp:swell-blocks/faq-item -->
-<div class="swell-block-faq-item">
-<div class="swell-block-faq-item__q">
-<span class="swell-block-faq-item__label">Q</span>
-<span class="swell-block-faq-item__question">${escapeHtml(q)}</span>
-</div>
-<div class="swell-block-faq-item__a">
-<span class="swell-block-faq-item__label">A</span>
-<span class="swell-block-faq-item__answer">${escapeHtml(a)}</span>
-</div>
-</div>
-<!-- /wp:swell-blocks/faq-item -->`;
-  }).join('\n');
-
   return `
-<h2>よくある質問（FAQ）</h2>
+<!-- wp:heading -->
+<h2 class="wp-block-heading">よくある質問（FAQ）</h2>
+<!-- /wp:heading -->
 
 <!-- wp:swell-blocks/faq {"className":"swell-block-faq"} -->
 <div class="swell-block-faq" itemscope itemtype="https://schema.org/FAQPage">
@@ -133,7 +117,10 @@ export function faqToGenericHtml(faqs) {
   }).join('\n');
 
   return `
-<h2>よくある質問（FAQ）</h2>
+<!-- wp:heading -->
+<h2 class="wp-block-heading">よくある質問（FAQ）</h2>
+<!-- /wp:heading -->
+
 <div class="faq-section" itemscope itemtype="https://schema.org/FAQPage">
 ${items}
 </div>`;

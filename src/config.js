@@ -13,8 +13,8 @@ function getEnv(key, fallback = '') {
 const config = {
   gemini: {
     apiKey: getEnv('GEMINI_API_KEY'),
-    textModel: getEnv('GEMINI_TEXT_MODEL', 'gemini-2.5-flash-preview-05-20'),
-    imageModel: getEnv('GEMINI_IMAGE_MODEL', 'gemini-2.0-flash-preview-image-generation'),
+    textModel: getEnv('GEMINI_TEXT_MODEL', 'gemini-3-flash-preview'),
+    imageModel: getEnv('GEMINI_IMAGE_MODEL', 'gemini-3.1-flash-image-preview'),
   },
   logLevel: getEnv('LOG_LEVEL', 'info'),
   paths: {

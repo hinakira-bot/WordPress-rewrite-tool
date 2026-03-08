@@ -90,7 +90,7 @@ export function extractFactualClaims(contentHtml) {
 }
 
 // ---------------------------------------------------------------------------
-// 最新情報調査（★最重要★）
+// 最新情報調査（★最重要★）- 日本語 + 英語の並列検索
 // ---------------------------------------------------------------------------
 
 export async function checkFreshness(article, siteId, onProgress) {
@@ -100,7 +100,6 @@ export async function checkFreshness(article, siteId, onProgress) {
   const claims = extractFactualClaims(article.content);
   logger.info(`抽出した情報要素: ${claims.length}件`);
 
-  // Gemini + Google Search Grounding で情報の最新性を検証
   const model = genAI.getGenerativeModel({
     model: config.gemini.textModel,
     tools: [{ googleSearch: {} }],
@@ -110,7 +109,6 @@ export async function checkFreshness(article, siteId, onProgress) {
   try {
     template = loadPrompt('freshness-check', siteId);
   } catch {
-    // デフォルトプロンプト（テンプレートファイルがない場合）
     template = getDefaultFreshnessPrompt();
   }
 
@@ -121,33 +119,135 @@ export async function checkFreshness(article, siteId, onProgress) {
     content: article.content?.substring(0, 8000) || '',
   });
 
-  onProgress?.({ message: 'Gemini + Google Search で情報を検証中...' });
+  onProgress?.({ message: 'Gemini + Google Search で情報を検証中（日本語＆英語並列）...' });
 
-  const result = await generateWithRetry(model, prompt, {
-    timeoutMs: 180_000,
-    label: '最新情報調査',
-  });
+  // 日本語 + 英語の並列検索
+  const [jaResult, enResult] = await Promise.allSettled([
+    generateWithRetry(model, prompt, { timeoutMs: 180_000, label: '最新情報調査(JA)' }),
+    generateWithRetry(model, getEnglishFreshnessPrompt(article, claims), { timeoutMs: 180_000, label: '最新情報調査(EN)' }),
+  ]);
 
-  const text = result.response.text();
-  const parsed = parseJSON(text);
+  const jaParsed = jaResult.status === 'fulfilled' ? parseJSON(jaResult.value.response.text()) : {};
+  const enParsed = enResult.status === 'fulfilled' ? parseJSON(enResult.value.response.text()) : {};
 
-  // 構造化レポートに変換
+  // 両方の結果をマージ
+  const mergedFactChecks = mergeFactChecks(
+    jaParsed.factChecks || [],
+    enParsed.factChecks || []
+  );
+  const mergedNewInfo = mergeNewInfo(
+    jaParsed.newInfo || [],
+    enParsed.newInfo || []
+  );
+
   const report = {
     checkedAt: new Date().toISOString(),
     totalClaims: claims.length,
-    factChecks: parsed.factChecks || [],
-    outdatedCount: (parsed.factChecks || []).filter((f) => f.changed).length,
-    newInfo: parsed.newInfo || [],
-    summary: parsed.summary || '',
-    recommendations: parsed.recommendations || [],
+    factChecks: mergedFactChecks,
+    outdatedCount: mergedFactChecks.filter((f) => f.changed).length,
+    newInfo: mergedNewInfo,
+    summary: jaParsed.summary || enParsed.summary || '',
+    recommendations: [
+      ...(jaParsed.recommendations || []),
+      ...(enParsed.recommendations || []).filter(
+        (r) => !(jaParsed.recommendations || []).some((jr) => jr.includes(r.substring(0, 10)))
+      ),
+    ],
+    searchLanguages: {
+      ja: jaResult.status === 'fulfilled',
+      en: enResult.status === 'fulfilled',
+    },
   };
 
-  logger.info(`最新情報調査完了: ${report.outdatedCount}件の古い情報を検出`);
+  logger.info(`最新情報調査完了: ${report.outdatedCount}件の古い情報を検出 (JA:${report.searchLanguages.ja}, EN:${report.searchLanguages.en})`);
   onProgress?.({
     message: `調査完了: ${report.outdatedCount}件の更新が必要な情報を検出`,
   });
 
   return report;
+}
+
+// ---------------------------------------------------------------------------
+// 英語ソース検索用プロンプト
+// ---------------------------------------------------------------------------
+
+function getEnglishFreshnessPrompt(article, claims) {
+  return `You are a fact-checking expert. Search English-language sources (official sites, TechCrunch, The Verge, Ars Technica, Wired, official documentation) to verify the following claims from a Japanese blog article.
+
+## Article Title
+${article.title}
+
+## Claims to Verify
+${claims.map((c) => `- ${c}`).join('\n')}
+
+## Article Content (excerpt)
+${article.content?.substring(0, 5000) || ''}
+
+## Instructions
+1. Search for the latest English-language information about each claim
+2. Focus on official announcements, pricing pages, and tech news from the last 3 months
+3. Look for information that Japanese sources may not have covered yet
+4. Output ALL results in Japanese
+
+## Output Format (JSON)
+{
+  "factChecks": [
+    {
+      "original": "記事内の記述（日本語）",
+      "current": "英語ソースで確認した最新情報（日本語で記述）",
+      "changed": true,
+      "changeType": "price_change | model_update | service_discontinued | name_change | feature_added | info_outdated",
+      "source": "情報源URL",
+      "importance": "high | medium | low",
+      "region": "en"
+    }
+  ],
+  "newInfo": [
+    {
+      "topic": "新しい情報のトピック（日本語）",
+      "description": "詳細な説明（日本語）",
+      "source": "英語ソースURL",
+      "region": "en"
+    }
+  ],
+  "recommendations": ["推奨アクション（日本語）"]
+}`;
+}
+
+// ---------------------------------------------------------------------------
+// 結果マージユーティリティ
+// ---------------------------------------------------------------------------
+
+function mergeFactChecks(jaChecks, enChecks) {
+  const merged = [...jaChecks.map((c) => ({ ...c, region: c.region || 'ja' }))];
+
+  for (const enCheck of enChecks) {
+    const isDuplicate = merged.some(
+      (m) => m.original === enCheck.original ||
+        (m.changeType === enCheck.changeType && m.current === enCheck.current)
+    );
+    if (!isDuplicate) {
+      merged.push({ ...enCheck, region: 'en' });
+    }
+  }
+
+  return merged;
+}
+
+function mergeNewInfo(jaInfo, enInfo) {
+  const merged = [...jaInfo.map((i) => ({ ...i, region: i.region || 'ja' }))];
+
+  for (const enItem of enInfo) {
+    const isDuplicate = merged.some(
+      (m) => m.topic === enItem.topic ||
+        (m.description && enItem.description && m.description.substring(0, 30) === enItem.description.substring(0, 30))
+    );
+    if (!isDuplicate) {
+      merged.push({ ...enItem, region: 'en' });
+    }
+  }
+
+  return merged;
 }
 
 // ---------------------------------------------------------------------------

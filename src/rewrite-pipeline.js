@@ -1,5 +1,5 @@
 import logger from './logger.js';
-import { getArticle, updateArticleStatus } from './article-fetcher.js';
+import { getArticle, updateArticleStatus, loadArticles } from './article-fetcher.js';
 import { getSite } from './site-manager.js';
 import { WordPressClient } from './wordpress-client.js';
 import { checkFreshness, researchExternalLinks } from './freshness-checker.js';
@@ -8,6 +8,7 @@ import { generateFAQ, faqToSwellBlock, faqToGenericHtml } from './faq-generator.
 import { generateRewrite } from './rewrite-generator.js';
 import { generateDiff } from './diff-generator.js';
 import { loadSiteSettings } from './settings-manager.js';
+import { postProcessContent, validateLinks } from './gutenberg-converter.js';
 
 // ---------------------------------------------------------------------------
 // リライトパイプライン（9ステップ）
@@ -84,6 +85,30 @@ export async function runRewritePipeline(siteId, articleWpId, options = {}) {
       siteId,
       onProgress,
     });
+
+    // --- Step 6.5: Post-Processing（SWELL変換 + Gutenbergブロック化 + リンク検証） ---
+    onProgress?.({ step: 6, total: 9, message: 'Step 6/9: SWELL装飾変換 & リンク検証中...' });
+    logger.info('Step 6.5: Post-Processing');
+
+    // SWELL装飾変換 + Gutenbergブロック化
+    let processedContent = postProcessContent(rewriteResult.content, settings);
+
+    // リンク検証（ホワイトリスト照合）
+    const { articles: allArticles } = loadArticles(siteId);
+    const articleIndex = allArticles.map((a) => ({ url: a.url, title: a.title }));
+    const linkValidation = await validateLinks(processedContent, site.url, articleIndex);
+    processedContent = linkValidation.html;
+
+    if (linkValidation.removedLinks.length > 0) {
+      logger.info(`リンク検証: ${linkValidation.removedLinks.length}件の不正リンクを除去`);
+    }
+
+    rewriteResult.content = processedContent;
+    rewriteResult.postProcessing = {
+      swellConverted: true,
+      gutenbergConverted: true,
+      removedLinks: linkValidation.removedLinks,
+    };
 
     // --- Step 7: 差分生成 ---
     onProgress?.({ step: 7, total: 9, message: 'Step 7/9: 差分を生成中...' });

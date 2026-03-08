@@ -1,8 +1,13 @@
 import * as cheerio from 'cheerio';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import config from './config.js';
 import logger from './logger.js';
 import { getSite } from './site-manager.js';
 import { WordPressClient } from './wordpress-client.js';
 import { loadArticles } from './article-fetcher.js';
+import { loadPrompt, renderPrompt } from './prompt-manager.js';
+
+const genAI = new GoogleGenerativeAI(config.gemini.apiKey);
 
 // ---------------------------------------------------------------------------
 // 記事内のリンクを抽出
@@ -119,6 +124,52 @@ export async function auditInternalLinks(article, siteId, onProgress) {
     }));
 
   const deadLinks = linkResults.filter((l) => l.status === 'dead').length;
+
+  // link-audit テンプレートによるAI分析（利用可能な場合）
+  let aiAnalysis = null;
+  try {
+    const auditTemplate = loadPrompt('link-audit', siteId);
+    const internalLinksText = internal.map((l) => `- [${l.text}](${l.href})`).join('\n');
+    const externalText = '（内部リンクのみ分析）';
+
+    const model = genAI.getGenerativeModel({ model: config.gemini.textModel });
+    const auditPrompt = renderPrompt(auditTemplate, {
+      title: article.title,
+      internalLinks: internalLinksText || 'なし',
+      externalLinks: externalText,
+    });
+
+    const result = await model.generateContent(auditPrompt);
+    const text = result.response.text();
+    const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    try {
+      aiAnalysis = JSON.parse(cleaned);
+    } catch {
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (match) try { aiAnalysis = JSON.parse(match[0]); } catch { /* */ }
+    }
+
+    // AI提案の追加リンクをマージ
+    if (aiAnalysis?.suggestedAdditions?.length > 0) {
+      for (const suggestion of aiAnalysis.suggestedAdditions) {
+        if (suggestion.type === 'internal' && suggestion.url) {
+          const alreadySuggested = suggestedLinks.some((s) => s.url === suggestion.url);
+          if (!alreadySuggested) {
+            suggestedLinks.push({
+              url: suggestion.url,
+              title: suggestion.anchorText || suggestion.url,
+              reason: `AI提案: ${suggestion.insertSection || '適切な箇所'}`,
+            });
+          }
+        }
+      }
+    }
+
+    logger.info('link-audit AI分析完了');
+  } catch (err) {
+    logger.debug(`link-audit AI分析スキップ: ${err.message}`);
+  }
+
   logger.info(`内部リンク調査完了: ${internal.length}件中 ${deadLinks}件のリンク切れ`);
   onProgress?.({ message: `内部リンク: ${deadLinks}件のリンク切れ、${suggestedLinks.length}件の追加候補` });
 
@@ -126,6 +177,7 @@ export async function auditInternalLinks(article, siteId, onProgress) {
     existing: linkResults,
     deadCount: deadLinks,
     suggestedAdditions: suggestedLinks,
+    aiAnalysis,
   };
 }
 
