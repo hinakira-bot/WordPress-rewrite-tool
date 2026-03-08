@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "node server.mjs",
-    "setup": "node src/setup.js"
+    "server": "NODE_ENV=production node server.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",

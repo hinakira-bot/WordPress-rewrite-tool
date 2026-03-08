@@ -14,11 +14,26 @@ export default function Sidebar() {
   const [sites, setSites] = useState([]);
   const [expandedSite, setExpandedSite] = useState(null);
 
+  const [queueCounts, setQueueCounts] = useState({});
+
   useEffect(() => {
     fetch('/api/sites')
       .then((r) => r.json())
       .then((data) => {
-        if (Array.isArray(data)) setSites(data);
+        if (Array.isArray(data)) {
+          setSites(data);
+          // 各サイトのキュー件数を取得
+          data.forEach((site) => {
+            fetch(`/api/sites/${site.id}/queue`)
+              .then((r) => r.json())
+              .then((q) => {
+                if (q.stats?.pending > 0) {
+                  setQueueCounts((prev) => ({ ...prev, [site.id]: q.stats.pending }));
+                }
+              })
+              .catch(() => {});
+          });
+        }
       })
       .catch(() => {});
   }, []);
@@ -104,7 +119,12 @@ export default function Sidebar() {
                           }`}
                         >
                           <span>{sub.icon}</span>
-                          <span>{sub.label}</span>
+                          <span className="flex-1">{sub.label}</span>
+                          {sub.path === '/queue' && queueCounts[site.id] > 0 && (
+                            <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+                              {queueCounts[site.id]}
+                            </span>
+                          )}
                         </Link>
                       );
                     })}

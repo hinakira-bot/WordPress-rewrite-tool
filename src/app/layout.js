@@ -4,6 +4,7 @@ import './globals.css';
 import { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 export default function RootLayout({ children }) {
   const [configChecked, setConfigChecked] = useState(false);
@@ -63,7 +64,9 @@ export default function RootLayout({ children }) {
         <div className="flex min-h-screen">
           <Sidebar />
           <main className="flex-1 overflow-auto">
-            <div className="p-6">{children}</div>
+            <div className="p-6">
+              <ErrorBoundary>{children}</ErrorBoundary>
+            </div>
           </main>
         </div>
       </body>

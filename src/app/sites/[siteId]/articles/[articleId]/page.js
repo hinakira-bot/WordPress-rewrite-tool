@@ -15,6 +15,7 @@ export default function ArticleDetailPage() {
   const [applying, setApplying] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
+  const [toast, setToast] = useState('');
   const [activeTab, setActiveTab] = useState('info'); // info, diff, freshness, links
 
   useEffect(() => {
@@ -93,6 +94,29 @@ export default function ArticleDetailPage() {
     }
   };
 
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 3000);
+  };
+
+  const handleAddToQueue = async () => {
+    try {
+      const res = await fetch(`/api/sites/${siteId}/queue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ articleWpId: parseInt(articleId, 10) }),
+      });
+      if (res.ok) {
+        showToast('✅ キューに追加しました');
+      } else {
+        const data = await res.json();
+        showToast(`⚠️ ${data.error || '追加に失敗'}`);
+      }
+    } catch {
+      showToast('❌ エラーが発生しました');
+    }
+  };
+
   if (loading) return <div className="text-gray-500">読み込み中...</div>;
   if (!article || article.error) return <div className="text-red-500">記事が見つかりません</div>;
 
@@ -119,6 +143,12 @@ export default function ArticleDetailPage() {
 
         <div className="flex gap-2 ml-4">
           <button
+            onClick={handleAddToQueue}
+            className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+          >
+            📋 キューに追加
+          </button>
+          <button
             onClick={() => handleRewrite(true)}
             disabled={rewriting}
             className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer disabled:opacity-50"
@@ -134,6 +164,17 @@ export default function ArticleDetailPage() {
           </button>
         </div>
       </div>
+
+      {/* トースト */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${
+          toast.startsWith('✅') ? 'bg-emerald-600 text-white' :
+          toast.startsWith('⚠️') ? 'bg-amber-500 text-white' :
+          'bg-red-600 text-white'
+        }`}>
+          {toast}
+        </div>
+      )}
 
       {/* メッセージ */}
       {progress && (
