@@ -1,0 +1,31 @@
+{
+  "name": "wordpress-auto-rewriter",
+  "version": "1.0.0",
+  "description": "WordPress全自動リライトツール - 最新情報調査 & SEO最適化でブログ記事を自動更新",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "node server.mjs",
+    "setup": "node src/setup.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "cheerio": "^1.0.0",
+    "diff": "^7.0.0",
+    "dotenv": "^16.4.7",
+    "next": "^16.1.6",
+    "node-cron": "^3.0.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "winston": "^3.17.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.2.1"
+  }
+}
