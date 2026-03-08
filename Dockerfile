@@ -21,7 +21,7 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=3002
+ENV PORT=3003
 
 # セキュリティ: 非rootユーザー
 RUN addgroup --system --gid 1001 rewriter \
@@ -43,9 +43,9 @@ RUN mkdir -p data/sites logs \
 
 USER rewriter
 
-EXPOSE 3002
+EXPOSE 3003
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3002/ || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3003/ || exit 1
 
 CMD ["node", "server.mjs"]
