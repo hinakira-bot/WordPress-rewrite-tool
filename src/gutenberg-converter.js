@@ -526,23 +526,78 @@ function repairFaqBlockStructure(html) {
 // ---------------------------------------------------------------------------
 // ★ SWELLボタンブロック → テキストリンク変換 ★
 // wp:loos/button ブロックを自然なテキストリンクの段落に変換
+// マイクロコピー（ボタン上下の装飾テキスト）も検出して除去
 // ---------------------------------------------------------------------------
 
 function convertButtonsToTextLinks(html) {
   let count = 0;
+  let microCopyCount = 0;
 
-  // wp:loos/button ブロック全体をマッチして変換
-  const result = html.replace(
+  // マイクロコピー判定: ボタン前後の装飾的な短いテキスト
+  // 例: ＼ 今すぐチェック ／, ※30日間返金保証, ▼ 詳しくはこちら ▼, 〜 公式サイトへ 〜
+  const isMicroCopy = (text) => {
+    if (!text) return false;
+    const t = text.trim();
+    // 短い（40文字以下）、かつ以下のパターンに該当
+    if (t.length > 40) return false;
+    // ＼...／ パターン
+    if (/^[＼\\]/.test(t) && /[／\/]$/.test(t)) return true;
+    // ▼...▼, ▲...▲, ★...★ パターン
+    if (/^[▼▲★☆●◆♪→►]/.test(t) && /[▼▲★☆●◆♪←◄]$/.test(t)) return true;
+    // 〜...〜 パターン
+    if (/^[〜~]/.test(t) && /[〜~]$/.test(t)) return true;
+    // ※注釈 パターン (ボタン下でよく見る)
+    if (/^※/.test(t)) return true;
+    // ↓ や ↑ で始まる誘導テキスト
+    if (/^[↓↑⬇⬆]/.test(t)) return true;
+    // 「今すぐ」「こちら」「公式」「詳しく」「無料」等で始まる短い誘導文
+    if (t.length <= 20 && /^(今すぐ|こちら|公式|詳しく|無料|期間限定|数量限定|人気|おすすめ)/.test(t)) return true;
+    return false;
+  };
+
+  // ステップ1: ボタンブロック直前のマイクロコピー段落を除去
+  // パターン: <!-- wp:paragraph {"align":"center"} --><p class="has-text-align-center">＼テキスト／</p><!-- /wp:paragraph --> の直後に wp:loos/button
+  let result = html.replace(
+    /(<!-- wp:paragraph(?:\s+\{[^}]*\})?\s*-->\s*<p[^>]*>)([\s\S]*?)(<\/p>\s*<!-- \/wp:paragraph -->)(\s*<!-- wp:loos\/button\s)/g,
+    (match, pOpen, innerText, pClose, buttonStart) => {
+      const plainText = innerText.replace(/<[^>]*>/g, '').trim();
+      if (isMicroCopy(plainText)) {
+        microCopyCount++;
+        return buttonStart; // マイクロコピー段落を除去、ボタン開始部分はそのまま
+      }
+      return match;
+    }
+  );
+
+  // ステップ2: ボタンブロックをテキストリンクに変換（左寄せ、→付き）
+  result = result.replace(
     /<!-- wp:loos\/button\s+(\{[\s\S]*?\})\s*-->\s*<div[^>]*class="swell-block-button[^"]*"[^>]*>\s*<a\s+href="([^"]*)"[^>]*>\s*<span>([\s\S]*?)<\/span>\s*<\/a>\s*<\/div>\s*<!-- \/wp:loos\/button -->/g,
     (match, jsonStr, href, text) => {
       count++;
-      const linkText = text.trim() || 'リンク';
-      return `<!-- wp:paragraph -->\n<p><a href="${href}" target="_blank" rel="noopener noreferrer">${linkText}</a></p>\n<!-- /wp:paragraph -->`;
+      const linkText = text.replace(/<[^>]*>/g, '').trim() || 'リンク';
+      // 単独リンクなので「→」付き、左寄せ
+      return `<!-- wp:paragraph -->\n<p>→ <a href="${href}" target="_blank" rel="noopener noreferrer">${linkText}</a></p>\n<!-- /wp:paragraph -->`;
+    }
+  );
+
+  // ステップ3: 変換済みテキストリンク（→付き）の直後のマイクロコピー段落を除去
+  result = result.replace(
+    /(<p>→ <a [^>]*>[\s\S]*?<\/a><\/p>\s*<!-- \/wp:paragraph -->)\s*(<!-- wp:paragraph(?:\s+\{[^}]*\})?\s*-->\s*<p[^>]*>)([\s\S]*?)(<\/p>\s*<!-- \/wp:paragraph -->)/g,
+    (match, linkBlock, pOpen, innerText, pClose) => {
+      const plainText = innerText.replace(/<[^>]*>/g, '').trim();
+      if (isMicroCopy(plainText)) {
+        microCopyCount++;
+        return linkBlock; // マイクロコピー段落を除去
+      }
+      return match;
     }
   );
 
   if (count > 0) {
     logger.info(`ボタン→テキストリンク変換: ${count}件`);
+  }
+  if (microCopyCount > 0) {
+    logger.info(`マイクロコピー除去: ${microCopyCount}件`);
   }
 
   return result;
