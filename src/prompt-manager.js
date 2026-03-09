@@ -41,12 +41,20 @@ export function loadPrompt(name, siteId = null) {
 export function renderPrompt(template, variables = {}) {
   let result = template;
 
-  // 条件ブロック
+  // 条件ブロック（{{#if varName}}...{{else}}...{{/if}}）
   result = result.replace(
-    /\{\{#if\s+(\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
-    (_match, varName, content) => {
+    /\{\{#if\s+(\w+)\}\}([\s\S]*?)(?:\{\{else\}\}([\s\S]*?))?\{\{\/if\}\}/g,
+    (_match, varName, ifContent, elseContent = '') => {
       const val = variables[varName];
-      return val && String(val).trim() ? content : '';
+      return val && String(val).trim() ? ifContent : elseContent;
+    }
+  );
+
+  // 等価比較ブロック（{{#eq varName "value"}}...{{/eq}}）
+  result = result.replace(
+    /\{\{#eq\s+(\w+)\s+"([^"]+)"\}\}([\s\S]*?)\{\{\/eq\}\}/g,
+    (_match, varName, expectedValue, content) => {
+      return variables[varName] === expectedValue ? content : '';
     }
   );
 

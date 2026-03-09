@@ -64,6 +64,32 @@ export default function SiteSettingsPage() {
           <h2 className="text-sm font-semibold text-gray-900 mb-4">リライト設定</h2>
           <div className="space-y-4">
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">リライトモード</label>
+              <select
+                value={settings.rewrite?.defaultMode || 'minimal'}
+                onChange={(e) => updateField('rewrite.defaultMode', e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full"
+              >
+                <option value="minimal">古い情報のみ修正（推奨）</option>
+                <option value="partial">情報の追記あり</option>
+                <option value="full">全体的なリライト</option>
+              </select>
+              <div className="mt-2 text-xs text-gray-500 space-y-1">
+                {settings.rewrite?.defaultMode === 'minimal' && (
+                  <p>📝 古くなった料金・プラン・モデル名等をピンポイントで修正 + FAQ追加。H2構成・文体・画像はそのまま維持します。</p>
+                )}
+                {settings.rewrite?.defaultMode === 'partial' && (
+                  <p>📝 古い情報の修正に加え、調査で判明した新情報を既存セクション内に追記します。H2構成・画像はそのまま維持します。</p>
+                )}
+                {settings.rewrite?.defaultMode === 'full' && (
+                  <p>📝 古い情報の修正 + 新情報追記 + 文体改善・SWELL装飾の追加。H2構成・画像はそのまま維持しつつ、各セクションの本文を大幅に改善します。</p>
+                )}
+                {!settings.rewrite?.defaultMode && (
+                  <p>📝 古くなった料金・プラン・モデル名等をピンポイントで修正 + FAQ追加。H2構成・文体・画像はそのまま維持します。</p>
+                )}
+              </div>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">更新方式</label>
               <select
                 value={settings.rewrite?.updateMethod || 'draft'}
@@ -113,6 +139,32 @@ export default function SiteSettingsPage() {
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-32"
             />
             <p className="text-xs text-gray-400 mt-1">このスコア以上の記事が自動リライト対象になります</p>
+          </div>
+        </div>
+
+        {/* コンテンツ設定 */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <h2 className="text-sm font-semibold text-gray-900 mb-4">コンテンツ設定</h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">リンクスタイル</label>
+              <select
+                value={settings.content?.linkStyle || 'text'}
+                onChange={(e) => updateField('content.linkStyle', e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full"
+              >
+                <option value="text">テキストリンクに統一（推奨）</option>
+                <option value="decorative">元の装飾を維持（ボタン・ブログカード）</option>
+              </select>
+              <div className="mt-2 text-xs text-gray-500">
+                {(settings.content?.linkStyle || 'text') === 'text' && (
+                  <p>🔗 ボタンリンクやブログカードを自然なテキストリンクに変換。文脈に溶け込みやすく、クリック率が高い傾向があります。</p>
+                )}
+                {settings.content?.linkStyle === 'decorative' && (
+                  <p>🎨 元記事のSWELLボタン・関連記事ブログカード等の装飾をそのまま維持します。</p>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 

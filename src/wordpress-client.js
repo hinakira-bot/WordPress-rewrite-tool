@@ -172,6 +172,19 @@ export class WordPressClient {
     return data;
   }
 
+  // --- 自動保存リビジョン作成（公開記事を変更せずにプレビュー用リビジョンを作成） ---
+  async createAutosave(postId, postData) {
+    logger.info(`自動保存作成: ID=${postId}`);
+
+    const { data } = await this.wpFetchJSON(`/posts/${postId}/autosaves`, {
+      method: 'POST',
+      body: JSON.stringify(postData),
+    });
+
+    logger.info(`自動保存作成成功: ID=${postId}, revision=${data.id}`);
+    return data;
+  }
+
   // --- 全記事のURL一覧取得（内部リンクチェック用） ---
   async fetchPostIndex() {
     let page = 1;

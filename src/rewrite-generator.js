@@ -28,6 +28,21 @@ async function generateWithRetry(model, prompt, { timeoutMs = 180_000, label = '
 }
 
 // ---------------------------------------------------------------------------
+// balloonID抽出（元記事から吹き出しキャラクターIDを自動抽出）
+// ---------------------------------------------------------------------------
+
+function extractBalloonIds(htmlContent) {
+  if (!htmlContent) return [];
+  const ids = new Set();
+  const regex = /<!-- wp:loos\/balloon\s+\{[^}]*"balloonID"\s*:\s*"(\d+)"[^}]*\}/g;
+  let match;
+  while ((match = regex.exec(htmlContent)) !== null) {
+    ids.add(match[1]);
+  }
+  return [...ids];
+}
+
+// ---------------------------------------------------------------------------
 // リライト生成
 // ---------------------------------------------------------------------------
 
@@ -37,11 +52,11 @@ export async function generateRewrite({
   internalLinkAudit,
   externalLinkAudit,
   externalLinkResearch,
-  faqHtml,
   siteId,
+  rewriteMode,
   onProgress,
 }) {
-  logger.info(`リライト生成: "${article.title}"`);
+  logger.info(`リライト生成: "${article.title}" (モード: ${rewriteMode || 'minimal'})`);
   onProgress?.({ message: 'リライト記事を生成中...' });
 
   const model = genAI.getGenerativeModel({ model: config.gemini.textModel });
@@ -57,13 +72,24 @@ export async function generateRewrite({
   const freshnessData = formatFreshnessData(freshnessReport);
   const linkData = formatLinkData(internalLinkAudit, externalLinkAudit, externalLinkResearch);
 
+  // 元記事からballoonIDを自動抽出
+  const balloonIds = extractBalloonIds(article.content);
+  if (balloonIds.length > 0) {
+    logger.info(`balloonID検出: ${balloonIds.join(', ')}`);
+  } else {
+    logger.info('balloonID: 元記事に吹き出しブロックなし');
+  }
+
+  // FAQ有無 + リライトモード + リンクスタイル + balloonIdsをAIに伝える
   const prompt = renderPrompt(template, {
     title: article.title,
     originalContent: article.content,
     freshnessData,
     linkData,
-    faqHtml: faqHtml || '',
-    hasFaq: faqHtml ? 'true' : '',
+    hasFaq: article.hasFaq ? 'true' : '',
+    rewriteMode: rewriteMode || 'minimal',
+    linkStyle: article.linkStyle || 'text',
+    balloonIds: balloonIds.length > 0 ? balloonIds.join(', ') : '',
   });
 
   const result = await generateWithRetry(model, prompt, {
@@ -101,13 +127,54 @@ function formatFreshnessData(report) {
   if (!report) return '調査なし';
 
   const lines = [];
-  lines.push(`## 最新情報調査結果 (${report.outdatedCount}件の更新が必要)`);
+  lines.push(`## 最新情報調査結果 (${report.outdatedCount || 0}件の更新が必要)`);
 
+  // Phase 1: 競合分析結果
+  if (report.competitorAnalysis) {
+    const ca = report.competitorAnalysis;
+    if (ca.missingTopics?.length > 0) {
+      lines.push('\n### 競合記事に書かれていて、この記事に不足しているトピック:');
+      for (const topic of ca.missingTopics) {
+        lines.push(`- **${topic.topic || topic}**: ${topic.description || '競合が扱っているが当記事では未言及'}`);
+      }
+    }
+    if (ca.latestUpdates?.length > 0) {
+      lines.push('\n### 競合記事で確認された最新情報:');
+      for (const update of ca.latestUpdates) {
+        lines.push(`- ${update.topic || update}: ${update.detail || ''}`);
+      }
+    }
+  }
+
+  // Phase 2: ファクトチェック結果
   if (report.factChecks?.length > 0) {
-    lines.push('\n### 情報の変更点:');
+    lines.push('\n### 情報の変更点（ファクトチェック済）:');
     for (const fc of report.factChecks) {
       if (fc.changed) {
         lines.push(`- **変更:** "${fc.original}" → "${fc.current}" (出典: ${fc.source || '不明'})`);
+      }
+    }
+  }
+
+  // Phase 3: 最新ニュース・公式発表
+  if (report.latestNews) {
+    const ln = report.latestNews;
+    if (ln.versionUpdates?.length > 0) {
+      lines.push('\n### 最新バージョン・アップデート情報:');
+      for (const vu of ln.versionUpdates) {
+        lines.push(`- **${vu.service || vu.name || 'サービス'}**: ${vu.update || vu.detail || vu.description || ''} (出典: ${vu.source || '公式'})`);
+      }
+    }
+    if (ln.pricingChanges?.length > 0) {
+      lines.push('\n### 料金変更情報:');
+      for (const pc of ln.pricingChanges) {
+        lines.push(`- **${pc.service || pc.name}**: ${pc.change || pc.detail || pc.description || ''}`);
+      }
+    }
+    if (ln.newFeatures?.length > 0) {
+      lines.push('\n### 新機能情報:');
+      for (const nf of ln.newFeatures) {
+        lines.push(`- **${nf.service || nf.name}**: ${nf.feature || nf.detail || nf.description || ''}`);
       }
     }
   }

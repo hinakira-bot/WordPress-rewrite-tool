@@ -75,27 +75,29 @@ export async function generateFAQ(article, siteId, onProgress) {
 export function faqToSwellBlock(faqs) {
   if (!faqs || faqs.length === 0) return '';
 
-  return `
-<!-- wp:heading -->
+  const heading = `<!-- wp:heading -->
 <h2 class="wp-block-heading">よくある質問（FAQ）</h2>
-<!-- /wp:heading -->
+<!-- /wp:heading -->`;
 
-<!-- wp:swell-blocks/faq {"className":"swell-block-faq"} -->
+  // Auto-Posting互換のSWELL FAQフォーマット（wp:html + div BEM構造）
+  const faqItems = faqs.map((faq) => {
+    const q = faq.question || faq.q || '';
+    const a = faq.answer || faq.a || '';
+    return `  <div class="swell-block-faq__item" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+    <div class="swell-block-faq__q" itemprop="name">${escapeHtml(q)}</div>
+    <div class="swell-block-faq__a" itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+      <div itemprop="text"><p>${escapeHtml(a)}</p></div>
+    </div>
+  </div>`;
+  }).join('\n');
+
+  const faqBlock = `<!-- wp:html -->
 <div class="swell-block-faq" itemscope itemtype="https://schema.org/FAQPage">
-${faqs.map((faq) => {
-  const q = faq.question || faq.q || '';
-  const a = faq.answer || faq.a || '';
-  return `<div itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
-<div class="swell-block-faq-item">
-<div class="swell-block-faq-item__q" itemprop="name">${escapeHtml(q)}</div>
-<div class="swell-block-faq-item__a" itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
-<div itemprop="text">${escapeHtml(a)}</div>
+${faqItems}
 </div>
-</div>
-</div>`;
-}).join('\n')}
-</div>
-<!-- /wp:swell-blocks/faq -->`;
+<!-- /wp:html -->`;
+
+  return `${heading}\n\n${faqBlock}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,21 +111,26 @@ export function faqToGenericHtml(faqs) {
     const q = faq.question || faq.q || '';
     const a = faq.answer || faq.a || '';
     return `<div class="faq-item" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
-<h3 itemprop="name">${escapeHtml(q)}</h3>
+<!-- wp:heading {"level":3} -->
+<h3 class="wp-block-heading" itemprop="name">${escapeHtml(q)}</h3>
+<!-- /wp:heading -->
 <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+<!-- wp:paragraph -->
 <p itemprop="text">${escapeHtml(a)}</p>
+<!-- /wp:paragraph -->
 </div>
 </div>`;
   }).join('\n');
 
-  return `
-<!-- wp:heading -->
+  return `<!-- wp:heading -->
 <h2 class="wp-block-heading">よくある質問（FAQ）</h2>
 <!-- /wp:heading -->
 
+<!-- wp:html -->
 <div class="faq-section" itemscope itemtype="https://schema.org/FAQPage">
 ${items}
-</div>`;
+</div>
+<!-- /wp:html -->`;
 }
 
 // ---------------------------------------------------------------------------

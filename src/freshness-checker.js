@@ -90,12 +90,15 @@ export function extractFactualClaims(contentHtml) {
 }
 
 // ---------------------------------------------------------------------------
-// 最新情報調査（★最重要★）- 日本語 + 英語の並列検索
+// 最新情報調査（★最重要★）- 3フェーズ方式
+// Phase 1: 競合記事分析（上位記事が何を書いているか）
+// Phase 2: 記事内情報の検証（JA+EN並列）
+// Phase 3: 最新ニュース・公式発表の調査
 // ---------------------------------------------------------------------------
 
 export async function checkFreshness(article, siteId, onProgress) {
   logger.info(`最新情報調査開始: "${article.title}"`);
-  onProgress?.({ message: '最新情報を調査中...' });
+  onProgress?.({ message: '最新情報を調査中（3フェーズ）...' });
 
   const claims = extractFactualClaims(article.content);
   logger.info(`抽出した情報要素: ${claims.length}件`);
@@ -105,6 +108,26 @@ export async function checkFreshness(article, siteId, onProgress) {
     tools: [{ googleSearch: {} }],
   });
 
+  const keyword = extractKeyword(article.title);
+  logger.info(`抽出キーワード: "${keyword}"`);
+
+  // === Phase 1: 競合記事分析 ===
+  onProgress?.({ message: 'Phase 1/3: 競合上位記事を分析中...' });
+  let competitorAnalysis = {};
+  try {
+    const compResult = await generateWithRetry(model, getCompetitorAnalysisPrompt(keyword, article), {
+      timeoutMs: 180_000,
+      label: '競合記事分析',
+    });
+    competitorAnalysis = parseJSON(compResult.response.text());
+    logger.info(`競合分析完了: ${competitorAnalysis.topArticles?.length || 0}件の上位記事`);
+  } catch (err) {
+    logger.warn(`競合分析失敗: ${err.message}`);
+  }
+
+  // === Phase 2: 記事内情報の検証（JA+EN並列）===
+  onProgress?.({ message: 'Phase 2/3: 記事内の情報を最新データと照合中（JA+EN並列）...' });
+
   let template;
   try {
     template = loadPrompt('freshness-check', siteId);
@@ -112,33 +135,68 @@ export async function checkFreshness(article, siteId, onProgress) {
     template = getDefaultFreshnessPrompt();
   }
 
+  const competitorInsights = formatCompetitorInsights(competitorAnalysis);
   const prompt = renderPrompt(template, {
     title: article.title,
     url: article.url,
     claims: claims.join('\n- '),
     content: article.content?.substring(0, 8000) || '',
-  });
+  }) + (competitorInsights ? `\n\n${competitorInsights}` : '');
 
-  onProgress?.({ message: 'Gemini + Google Search で情報を検証中（日本語＆英語並列）...' });
-
-  // 日本語 + 英語の並列検索
   const [jaResult, enResult] = await Promise.allSettled([
-    generateWithRetry(model, prompt, { timeoutMs: 180_000, label: '最新情報調査(JA)' }),
-    generateWithRetry(model, getEnglishFreshnessPrompt(article, claims), { timeoutMs: 180_000, label: '最新情報調査(EN)' }),
+    generateWithRetry(model, prompt, { timeoutMs: 180_000, label: '情報検証(JA)' }),
+    generateWithRetry(model, getEnglishFreshnessPrompt(article, claims), { timeoutMs: 180_000, label: '情報検証(EN)' }),
   ]);
 
   const jaParsed = jaResult.status === 'fulfilled' ? parseJSON(jaResult.value.response.text()) : {};
   const enParsed = enResult.status === 'fulfilled' ? parseJSON(enResult.value.response.text()) : {};
 
-  // 両方の結果をマージ
-  const mergedFactChecks = mergeFactChecks(
-    jaParsed.factChecks || [],
-    enParsed.factChecks || []
-  );
-  const mergedNewInfo = mergeNewInfo(
-    jaParsed.newInfo || [],
-    enParsed.newInfo || []
-  );
+  // === Phase 3: 最新ニュース・公式発表の調査 ===
+  onProgress?.({ message: 'Phase 3/3: 最新ニュース・公式発表を調査中...' });
+  let latestNews = {};
+  try {
+    const newsResult = await generateWithRetry(model, getLatestNewsPrompt(keyword, article), {
+      timeoutMs: 180_000,
+      label: '最新ニュース調査',
+    });
+    latestNews = parseJSON(newsResult.response.text());
+    logger.info(`最新ニュース完了: ${latestNews.latestUpdates?.length || 0}件`);
+  } catch (err) {
+    logger.warn(`最新ニュース調査失敗: ${err.message}`);
+  }
+
+  // === 全結果をマージ ===
+  const mergedFactChecks = mergeFactChecks(jaParsed.factChecks || [], enParsed.factChecks || []);
+  const mergedNewInfo = mergeNewInfo(jaParsed.newInfo || [], enParsed.newInfo || []);
+
+  // 競合記事のギャップ情報を追加
+  for (const topic of (competitorAnalysis.missingTopics || [])) {
+    if (!mergedNewInfo.some((i) => i.topic === topic.topic)) {
+      mergedNewInfo.push({ topic: topic.topic, description: topic.description || '競合上位記事でカバー済み', source: topic.source || '競合分析', region: 'competitor' });
+    }
+  }
+
+  // 最新ニュースを追加
+  for (const update of (latestNews.latestUpdates || [])) {
+    if (!mergedNewInfo.some((i) => i.topic === update.topic)) {
+      mergedNewInfo.push({ topic: update.topic, description: update.description, source: update.source || '最新ニュース', region: 'news' });
+    }
+  }
+
+  // バージョン更新をfactChecksに追加
+  for (const vu of (latestNews.versionUpdates || [])) {
+    if (!mergedFactChecks.some((fc) => fc.current === vu.newVersion || fc.current === vu.latestVersion)) {
+      mergedFactChecks.push({
+        original: vu.oldVersion || vu.service,
+        current: vu.newVersion || vu.latestVersion,
+        changed: true,
+        changeType: 'model_update',
+        source: vu.source || '最新ニュース',
+        importance: 'high',
+        region: 'news',
+      });
+    }
+  }
 
   const report = {
     checkedAt: new Date().toISOString(),
@@ -149,22 +207,130 @@ export async function checkFreshness(article, siteId, onProgress) {
     summary: jaParsed.summary || enParsed.summary || '',
     recommendations: [
       ...(jaParsed.recommendations || []),
-      ...(enParsed.recommendations || []).filter(
-        (r) => !(jaParsed.recommendations || []).some((jr) => jr.includes(r.substring(0, 10)))
-      ),
+      ...(enParsed.recommendations || []).filter((r) => !(jaParsed.recommendations || []).some((jr) => jr.includes(r.substring(0, 10)))),
+      ...(competitorAnalysis.recommendations || []),
+      ...(latestNews.recommendations || []),
     ],
-    searchLanguages: {
-      ja: jaResult.status === 'fulfilled',
-      en: enResult.status === 'fulfilled',
-    },
+    competitorAnalysis: { topArticles: competitorAnalysis.topArticles || [], missingTopics: competitorAnalysis.missingTopics || [] },
+    latestNews: { updates: latestNews.latestUpdates || [], versionUpdates: latestNews.versionUpdates || [] },
+    searchLanguages: { ja: jaResult.status === 'fulfilled', en: enResult.status === 'fulfilled' },
   };
 
-  logger.info(`最新情報調査完了: ${report.outdatedCount}件の古い情報を検出 (JA:${report.searchLanguages.ja}, EN:${report.searchLanguages.en})`);
-  onProgress?.({
-    message: `調査完了: ${report.outdatedCount}件の更新が必要な情報を検出`,
-  });
+  logger.info(`最新情報調査完了: ${report.outdatedCount}件の更新, ${report.newInfo.length}件の新情報`);
+  onProgress?.({ message: `調査完了: ${report.outdatedCount}件の更新必要, ${report.newInfo.length}件の新情報` });
 
   return report;
+}
+
+// ---------------------------------------------------------------------------
+// キーワード抽出
+// ---------------------------------------------------------------------------
+
+function extractKeyword(title) {
+  return title
+    .replace(/【[^】]*】/g, '').replace(/\([^)]*\)/g, '').replace(/（[^）]*）/g, '')
+    .replace(/\d{4}年[最新版]*|最新版|\d+選|徹底|完全|保存版/g, '')
+    .replace(/の(使い方|始め方|やり方|選び方|比較|まとめ|レビュー|評判|口コミ)/g, ' $1')
+    .trim().substring(0, 30);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1: 競合記事分析プロンプト
+// ---------------------------------------------------------------------------
+
+function getCompetitorAnalysisPrompt(keyword, article) {
+  const h2s = extractH2Headings(article.content);
+  return `あなたはSEO競合分析の専門家です。「${keyword}」でGoogle検索上位の記事を調査し、自記事と比較してください。
+
+## 自記事タイトル: ${article.title}
+## 自記事のH2見出し:
+${h2s.map((h) => `- ${h}`).join('\n') || '不明'}
+
+## 調査指示
+1. 「${keyword}」で検索し、上位5〜10記事のタイトル・構成を調査
+2. 上位記事がカバーしていて自記事に**ないトピック**を特定
+3. 上位記事で使われている**最新のバージョン・料金・サービス情報**を収集
+
+## 出力（JSON）
+{
+  "topArticles": [{ "title": "記事タイトル", "url": "URL", "keyTopics": ["トピック"], "latestInfo": "最新情報" }],
+  "missingTopics": [{ "topic": "不足トピック", "description": "重要な理由", "source": "参考URL" }],
+  "latestVersions": [{ "service": "サービス名", "currentVersion": "最新バージョン/情報", "source": "URL" }],
+  "recommendations": ["改善提案"]
+}`;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: 最新ニュース・公式発表プロンプト
+// ---------------------------------------------------------------------------
+
+function getLatestNewsPrompt(keyword, article) {
+  const services = extractServiceNames(article.content);
+  return `あなたは最新テクノロジーニュースの専門家です。以下のサービス・ツールの**直近3ヶ月の公式発表・アップデート**を徹底調査してください。
+
+## 記事タイトル: ${article.title}
+## 記事内のサービス:
+${services.map((s) => `- ${s}`).join('\n') || '不明'}
+## キーワード: 「${keyword}」
+
+## 調査指示（★重要★）
+1. 各サービスの**公式サイト・ブログ**で直近3ヶ月のアップデートを検索
+2. 特に重点調査:
+   - **最新バージョン・モデル名**（例: GPTの最新は? Claudeの最新は? Geminiの最新は?）
+   - **料金改定**（値上げ・値下げ・新プラン追加）
+   - **新機能リリース**
+   - **サービス統合・名称変更・終了**
+3. テック系ニュースサイト（TechCrunch, The Verge, ITmedia, GIGAZINE等）も検索
+4. **日付とソースURL**を必ず含めること
+
+## 出力（JSON）
+{
+  "latestUpdates": [{ "topic": "トピック", "description": "詳細", "date": "YYYY-MM-DD", "source": "URL" }],
+  "versionUpdates": [{ "service": "サービス名", "oldVersion": "旧バージョン", "newVersion": "最新バージョン", "latestVersion": "最新名", "releaseDate": "日付", "source": "URL" }],
+  "pricingChanges": [{ "service": "サービス名", "oldPrice": "旧料金", "newPrice": "新料金", "source": "URL" }],
+  "recommendations": ["推奨アクション"]
+}`;
+}
+
+// ---------------------------------------------------------------------------
+// ヘルパー
+// ---------------------------------------------------------------------------
+
+function extractH2Headings(html) {
+  if (!html) return [];
+  const $ = cheerio.load(html, { decodeEntities: false });
+  const headings = [];
+  $('h2').each((_, el) => headings.push($(el).text().trim()));
+  return headings;
+}
+
+function extractServiceNames(html) {
+  if (!html) return [];
+  const text = cheerio.load(html, { decodeEntities: false }).text();
+  const services = new Set();
+  const patterns = [
+    /(?:ChatGPT|GPT-[\w.]+|OpenAI)/gi, /(?:Claude[\s-]?[\w.]*|Anthropic)/gi,
+    /(?:Gemini[\s-]?[\w.]*|Google AI|Google Bard)/gi, /(?:Midjourney|DALL-E[\s-]?[\w.]*|Stable Diffusion)/gi,
+    /(?:Microsoft Copilot|GitHub Copilot|Notion AI|Jasper|Copy\.ai|Perplexity)/gi,
+    /(?:WordPress|Shopify|Wix|Squarespace)/gi, /(?:ConoHa|Xserver|mixhost)/gi,
+    /(?:AWS|Azure|GCP|Vercel|Netlify|Cloudflare)/gi,
+  ];
+  for (const p of patterns) { const m = text.match(p); if (m) m.forEach((s) => services.add(s.trim())); }
+  return [...services];
+}
+
+function formatCompetitorInsights(analysis) {
+  if (!analysis?.topArticles?.length && !analysis?.missingTopics?.length) return '';
+  const lines = ['## 競合上位記事からの情報'];
+  if (analysis.latestVersions?.length > 0) {
+    lines.push('\n### 上位記事の最新情報:');
+    for (const v of analysis.latestVersions) lines.push(`- ${v.service}: ${v.currentVersion} (${v.source || '上位記事'})`);
+  }
+  if (analysis.missingTopics?.length > 0) {
+    lines.push('\n### 自記事に不足するトピック:');
+    for (const t of analysis.missingTopics) lines.push(`- ${t.topic}: ${t.description}`);
+  }
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------

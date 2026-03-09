@@ -5,7 +5,7 @@ import logger from './logger.js';
 
 const DEFAULT_SETTINGS = {
   rewrite: {
-    defaultMode: 'full', // seo, partial, full
+    defaultMode: 'minimal', // minimal, partial, full
     updateMethod: 'draft', // draft, publish
     articlesPerDay: 3,
     cronSchedule: '0 10 * * *',
@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS = {
     preserveImages: true,
     generateNewImages: false,
     language: 'ja',
+    linkStyle: 'text', // text: 自然なテキストリンク, decorative: 元の装飾(ボタン・ブログカード)維持
   },
   swell: {
     enabled: true,
